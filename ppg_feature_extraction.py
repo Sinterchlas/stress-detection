@@ -1,6 +1,7 @@
 import lib.dwt as dwt
 import lib.bmepy as bmepy
 import lib.time_domain as bmetm
+import lib.frequency_analysis as bmefq 
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -31,12 +32,14 @@ def z_score(signal):
 def min_max_scaling(signal):
     return (signal - np.min(signal)) / (np.max(signal) - np.min(signal))
 
+@st.cache_data # <-- DITAMBAHKAN CACHE
 def load_data(file):
     df = pd.read_csv(file, sep=',')
     df.columns = [col.lower() for col in df.columns]
     signal = df['ir'] if 'ir' in df.columns else df.iloc[:,0]
     return signal
 
+@st.cache_data # <-- DITAMBAHKAN CACHE
 def preprocess_signal(signal, sampling_rate, target_sampling_rate):
     # Downsample to target_sampling_rate
     new_length = int(len(signal) * target_sampling_rate / sampling_rate)
@@ -94,6 +97,8 @@ uploaded_file = st.file_uploader('Upload PPG CSV file', type=['csv'])
 original_sampling_rate = st.number_input('Sampling Rate (Hz)', min_value=1, value=50)
 target_sampling_rate = st.number_input('Target Sampling Rate (Hz)', min_value=1, value=40)
 ppg_features = {}
+pi_intervals = None     # <-- 2. INISIALISASI VARIABEL GLOBAL
+peak_indices = None   # <-- 2. INISIALISASI VARIABEL GLOBAL
 
 if uploaded_file:
     signal = load_data(uploaded_file)
@@ -102,6 +107,17 @@ if uploaded_file:
     plot_signal(time, signal, title='Raw PPG Signal', x_label='Time (s)', y_label='Amplitude')
     plot_signal(time, processed_signal, title='Processed PPG Signal', x_label='Time (s)', y_label='Amplitude')
     plot_signal(time, filtered_signal, title='Filtered PPG Signal', x_label='Time (s)', y_label='Amplitude')
+
+    # --- 3. PERHITUNGAN GLOBAL HRV ---
+    # Dihitung di sini agar 'pi_intervals' dan 'peak_indices' tersedia untuk SEMUA halaman.
+    peak_indices = bmepy.detect_peaks(filtered_signal, height=0.1, distance=1, prominence=0.1)
+    
+    if len(peak_indices) > 1:
+        pi_intervals = np.diff(time[peak_indices]) # Interval dalam detik
+    else:
+        st.warning("Not enough peaks detected in the signal to perform full HRV analysis.")
+    # --- AKHIR PERHITUNGAN GLOBAL ---
+
 
 if page.startswith("Respiratory & Vasometric Extraction"):
     st.markdown("---")
@@ -368,19 +384,16 @@ if page.startswith("Respiratory & Vasometric Extraction"):
         data.columns = ['Feature', 'Value']
         st.dataframe(data)
 
-
 elif page.startswith("Time Domain Analysis"):
     st.markdown("---")
     st.header("Time Domain Analysis")
     st.info("HRV Analysis of PPG Signal")
     st.markdown("---")
 
-    peak_indices = bmepy.detect_peaks(filtered_signal, height=0.5, distance=5, prominence=0.5)
-
-    st.subheader("Filtered Signal with Detected Peaks (Local Maxima)")
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=time, y=filtered_signal, mode='lines', name='Filtered Signal'))
-    if len(peak_indices) > 0:
+    if uploaded_file and pi_intervals is not None and peak_indices is not None:
+        st.subheader("Filtered Signal with Detected Peaks (Local Maxima)")
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=time, y=filtered_signal, mode='lines', name='Filtered Signal'))
         fig.add_trace(go.Scatter(
             x=time[peak_indices],
             y=filtered_signal[peak_indices],
@@ -388,20 +401,19 @@ elif page.startswith("Time Domain Analysis"):
             name=f'Detected Peaks ({len(peak_indices)})',
             marker=dict(color='red', size=8, symbol='circle')
         ))
-    fig.update_layout(
-        title='Filtered Signal with Detected Peaks',
-        xaxis_title='Time (s)',
-        yaxis_title='Amplitude',
-        xaxis=dict(range=[np.min(time), np.max(time)]),
-        yaxis=dict(range=[np.min(filtered_signal), np.max(filtered_signal)])
-    )
-    st.plotly_chart(fig)
+        fig.update_layout(
+            title='Filtered Signal with Detected Peaks',
+            xaxis_title='Time (s)',
+            yaxis_title='Amplitude',
+            xaxis=dict(range=[np.min(time), np.max(time)]),
+            yaxis=dict(range=[np.min(filtered_signal), np.max(filtered_signal)])
+        )
+        st.plotly_chart(fig)
 
-    # PI Interval calculation
-    st.subheader("PI Intervals (seconds)")
-    if len(peak_indices) > 1:
-        pi_intervals = np.diff(time[peak_indices])
+        # PI Interval calculation
+        st.subheader("PI Intervals (seconds)")
         st.write(pi_intervals)
+        
         # Tachogram visualization
         st.subheader("Tachogram (PI Intervals vs Beat Number)")
         fig_tachogram = go.Figure()
@@ -422,21 +434,129 @@ elif page.startswith("Time Domain Analysis"):
 
         st.write(f"Mean Pulse Interval: {np.mean(pi_intervals):.4f} s")
         st.write(f"Std Pulse Interval: {np.std(pi_intervals):.4f} s")
-    else:
-        st.write("Not enough peaks to calculate PI intervals.")
 
-    time_domain_features = bmetm.compute_time_domain_features(pi_intervals)
-    st.subheader("Time Domain Features")
-    data = pd.DataFrame.from_dict(time_domain_features, orient='index', columns=['Value'])
-    data = data.reset_index()
-    data.columns = ['Feature', 'Value']
-    st.dataframe(data)
+        # Hitung fitur time domain
+        time_domain_features = bmetm.compute_time_domain_features(pi_intervals)
+        st.subheader("Time Domain Features")
+        data = pd.DataFrame.from_dict(time_domain_features, orient='index', columns=['Value'])
+        data = data.reset_index()
+        data.columns = ['Feature', 'Value']
+        st.dataframe(data.style.format({"Value": "{:.4f}"}))
+
+    elif uploaded_file:
+        st.warning("Could not perform time domain analysis. Check if enough peaks were detected on the main page.")
+    else:
+        st.info("Please upload a PPG file to begin analysis.")
+
 
 elif page.startswith("Frequency Domain Analysis"):
     st.markdown("---")
     st.header("Frequency Domain Analysis")
-    st.info("This page will show frequency domain features (to be implemented)")
+    st.info("HRV Frequency Domain Analysis using Welch's Periodogram, based on your notebook code and lecture slides.")
     st.markdown("---")
+
+    if uploaded_file and pi_intervals is not None:
+    
+        freqs, psd, freq_features = bmefq.compute_frequency_domain_features(pi_intervals, fs_interp=4)
+
+        if freqs is not None and psd is not None and freq_features:
+            
+            # band  plotting
+            vlf_band = (0.003, 0.04)
+            lf_band = (0.04, 0.15)
+            hf_band = (0.15, 0.4)
+            
+            st.subheader("HRV Power Spectral Density (PSD)")
+            fig_psd = go.Figure()
+            fig_psd.add_trace(go.Scatter(x=freqs, y=psd, mode='lines', name='PSD', line=dict(color='blue')))
+            
+            fig_psd.add_vrect(x0=vlf_band[0], x1=vlf_band[1], fillcolor="green", opacity=0.2, layer="below", line_width=0, name="VLF (0.003-0.04 Hz)")
+            fig_psd.add_vrect(x0=lf_band[0], x1=lf_band[1], fillcolor="orange", opacity=0.2, layer="below", line_width=0, name="LF (0.04-0.15 Hz)")
+            fig_psd.add_vrect(x0=hf_band[0], x1=hf_band[1], fillcolor="red", opacity=0.2, layer="below", line_width=0, name="HF (0.15-0.4 Hz)")
+            
+        
+            lf_peak = freq_features.get('LF Peak Frequency (Hz)')
+            hf_peak = freq_features.get('HF Peak Frequency (Hz)')
+            
+            if lf_peak is not None:
+                peak_lf_power = psd[np.argmin(np.abs(freqs - lf_peak))]
+                fig_psd.add_annotation(
+                    x=lf_peak, y=peak_lf_power,
+                    text=f"LF Peak: {lf_peak:.3f} Hz", showarrow=True, arrowhead=1, yshift=10
+                )
+            if hf_peak is not None:
+                peak_hf_power = psd[np.argmin(np.abs(freqs - hf_peak))]
+                fig_psd.add_annotation(
+                    x=hf_peak, y=peak_hf_power,
+                    text=f"HF Peak: {hf_peak:.3f} Hz", showarrow=True, arrowhead=1, yshift=10
+                )
+
+            fig_psd.update_layout(
+                title="Welch's Power Spectral Density",
+                xaxis_title="Frequency (Hz)",
+                yaxis_title="Power Spectral Density (ms²/Hz)",
+                xaxis_range=[0, 0.5] # Fokus pada area di bawah 0.5 Hz
+            )
+            st.plotly_chart(fig_psd)
+
+            
+            st.subheader("Power Band Analysis")
+
+            # Ambil semua nilai fitur
+            lf_power = freq_features.get('LF Power (ms²)')
+            hf_power = freq_features.get('HF Power (ms²)')
+            lf_nu = freq_features.get('LF (n.u.)')
+            hf_nu = freq_features.get('HF (n.u.)')
+            lf_hf_ratio = freq_features.get('LF/HF Ratio')
+
+            
+            col1, col2 = st.columns(2)
+
+            with col1:
+                # Plot untuk Absolute Power (LF dan HF)
+                fig_bar_abs = go.Figure()
+                fig_bar_abs.add_trace(go.Bar(
+                    x=['LF Power', 'HF Power'],
+                    y=[lf_power, hf_power],
+                    text=[f'{lf_power:.2f} ms²', f'{hf_power:.2f} ms²'],
+                    textposition='auto',
+                    marker_color=['#FF8C00', '#DC143C'] # Oranye dan Merah
+                ))
+                fig_bar_abs.update_layout(
+                    title=f'Absolute Power',
+                    yaxis_title='Power (ms²)'
+                )
+                st.plotly_chart(fig_bar_abs)
+
+            with col2:
+                # Plot untuk Normalized Units (LF n.u. dan HF n.u.)
+                fig_bar_nu = go.Figure()
+                fig_bar_nu.add_trace(go.Bar(
+                    x=['LF (n.u.)', 'HF (n.u.)'],
+                    y=[lf_nu, hf_nu],
+                    text=[f'{lf_nu:.1f}%', f'{hf_nu:.1f}%'],
+                    textposition='auto',
+                    marker_color=['#FF8C00', '#DC143C'] # Oranye dan Merah
+                ))
+                fig_bar_nu.update_layout(
+                    title=f'Normalized Power (LF/HF Ratio: {lf_hf_ratio:.2f})',
+                    yaxis_title='Normalized Units (n.u.)'
+                )
+                st.plotly_chart(fig_bar_nu)
+
+
+            # --- Plot 4: Tabel Fitur ---
+            st.subheader("All Frequency Domain Features")
+            data = pd.DataFrame.from_dict(freq_features, orient='index', columns=['Value'])
+            data = data.reset_index()
+            data.columns = ['Feature', 'Value']
+            st.dataframe(data.style.format({"Value": "{:.4f}"}))
+
+    elif uploaded_file:
+        st.warning("Could not perform frequency domain analysis. Check if enough peaks were detected on the main page.")
+    else:
+        st.info("Please upload a PPG file to begin analysis.")
+
 
 elif page.startswith("Non-Linear Analysis"):
     st.markdown("---")
