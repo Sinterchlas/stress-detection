@@ -1,0 +1,25 @@
+# Ignore Python cache and virtual environment
+__pycache__/
+*.py[cod]
+venv/
+env/
+
+# Ignore Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Ignore system files
+.DS_Store
+Thumbs.db
+
+# Ignore logs and temp files
+*.log
+*.tmp
+
+# Ignore build and output directories
+build/
+dist/
+*.egg-info/
+
+# Ignore personal configuration
+*.env
+config.json
