@@ -278,13 +278,6 @@ if page.startswith("Respiratory & Vasometric Extraction"):
                         showlegend=True
                     )
                     st.plotly_chart(fig)
-
-                    # show comparison of estimated vs ground truth if available
-                    if real_respiration_rate is not None:
-                        st.write(f"Estimated Respiration Rate: {respiration_rate} breaths per minute")
-                        st.write(f"Label Respiration Rate: {real_respiration_rate} breaths per minute")
-                    else:
-                        st.write(f"Estimated Respiration Rate: {respiration_rate} breaths per minute")
                 else:
                     st.warning("Uploaded RR file seems empty or incorrectly formatted.")
             except Exception as e:
