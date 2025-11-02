@@ -314,7 +314,7 @@ if page.startswith("Respiratory & Vasometric Extraction"):
         plot_signal(x_axis, scale_8, title='Vasometric Activity Signal (Scale 8)', x_label='Sample Index', y_label='Amplitude')
         
         N = len(scale_8)
-        dft_result = bmepy.dft(scale_8)
+        dft_result = bmepy.fft(scale_8)
         # fft_result = scipy.fft.fft(scale_8)
         
         T = N/target_sampling_rate
