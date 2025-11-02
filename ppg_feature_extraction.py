@@ -124,7 +124,11 @@ uploaded_file = st.file_uploader('Upload PPG CSV file', type=['csv'])
 original_sampling_rate = st.number_input('Sampling Rate (Hz)', min_value=1, value=50)
 target_sampling_rate = st.number_input('Target Sampling Rate (Hz)', min_value=1, value=40)
 rr_file = st.file_uploader('Upload ground-truth RR CSV (optional -> two columns: time,force)', type=['csv'], key='rr_gt')
-ppg_features = {}
+if 'ppg_features' not in st.session_state:
+    # persist extracted features across Streamlit reruns/navigation
+    st.session_state['ppg_features'] = {}
+# local alias for convenience (mutating this dict updates session state)
+ppg_features = st.session_state['ppg_features']
 pi_intervals = None     
 peak_indices = None   
 
@@ -418,11 +422,17 @@ if page.startswith("Respiratory & Vasometric Extraction"):
         )
         st.plotly_chart(fig)
 
-        st.write("Extracted PPG Features")
-        data = pd.DataFrame.from_dict(ppg_features, orient='index', columns=['Value'])
-        data = data.reset_index()
-        data.columns = ['Feature', 'Value']
-        st.dataframe(data)
+        st.write("Extracted PPG Features (Respiratory & Vasometric)")
+        # Only show respiratory and vasometric features on this page
+        resp_keys = ['respiratory_rate (brpm)', 'vasometric_activity (Hz)']
+        resp_dict = {k: ppg_features.get(k, None) for k in resp_keys if k in ppg_features}
+        if len(resp_dict) == 0:
+            st.info("No respiratory or vasometric features extracted yet. Run extraction above.")
+        else:
+            data = pd.DataFrame.from_dict(resp_dict, orient='index', columns=['Value'])
+            data = data.reset_index()
+            data.columns = ['Feature', 'Value']
+            st.dataframe(data)
 
 elif page.startswith("Time Domain Analysis"):
     st.markdown("---")
@@ -480,12 +490,15 @@ elif page.startswith("Time Domain Analysis"):
             data = data.reset_index()
             data.columns = ['Feature', 'Value']
             st.dataframe(data.style.format({"Value": "{:.4f}"}))
-            # Merge time-domain features into global ppg_features (make keys unique if needed)
+            # Store time-domain features under a dedicated key in session state
+            # convert numeric values to float where possible
+            td = {}
             for k, v in time_domain_features.items():
                 try:
-                    ppg_features[str(k)] = float(v) if v is not None else None
+                    td[str(k)] = float(v) if v is not None else None
                 except Exception:
-                    ppg_features[str(k)] = v
+                    td[str(k)] = v
+            ppg_features['time_domain'] = td
         
         else:
             st.error("Gagal menghitung fitur Time Domain. Hanya 1 atau 0 puncak terdeteksi. Silakan sesuaikan parameter di halaman utama.")
@@ -591,12 +604,14 @@ elif page.startswith("Frequency Domain Analysis"):
             data = data.reset_index()
             data.columns = ['Feature', 'Value']
             st.dataframe(data.style.format({"Value": "{:.4f}"}))
-            # Merge frequency-domain features into global ppg_features
+            # Store frequency-domain features under a dedicated key in session state
+            fd = {}
             for k, v in freq_features.items():
                 try:
-                    ppg_features[str(k)] = float(v) if v is not None else None
+                    fd[str(k)] = float(v) if v is not None else None
                 except Exception:
-                    ppg_features[str(k)] = v
+                    fd[str(k)] = v
+            ppg_features['frequency_domain'] = fd
 
     elif uploaded_file:
         st.warning("Could not perform frequency domain analysis. Check if enough peaks were detected on the main page.")
@@ -631,10 +646,13 @@ elif page.startswith("Non-Linear Analysis"):
                 SD2 = poincare_metrics['SD2']
                 SD_ratio = poincare_metrics['SD1_SD2_ratio']
 
-                # Store in ppg_features dictionary
-                ppg_features['poincare_SD1 (ms)'] = round(SD1, 4) if SD1 is not None else None
-                ppg_features['poincare_SD2 (ms)'] = round(SD2, 4) if SD2 is not None else None
-                ppg_features['poincare_SD1/SD2_ratio'] = round(SD_ratio, 4) if SD_ratio is not None else None
+                # Store in session state under non-linear category
+                nl = {
+                    'poincare_SD1 (ms)': round(SD1, 4) if SD1 is not None else None,
+                    'poincare_SD2 (ms)': round(SD2, 4) if SD2 is not None else None,
+                    'poincare_SD1/SD2_ratio': round(SD_ratio, 4) if SD_ratio is not None else None
+                }
+                ppg_features['non_linear'] = nl
 
                 st.subheader("Poincaré Analysis Summary")
                 col1, col2, col3 = st.columns(3)
@@ -797,12 +815,16 @@ elif page.startswith("Non-Linear Analysis"):
                     st.error(f"Error creating Poincaré plot: {str(e)}")
 
                 st.markdown("---")
-                st.subheader("Extracted PPG Features (including Poincaré)")
-                if ppg_features:
-                    data = pd.DataFrame.from_dict(ppg_features, orient='index', columns=['Value'])
-                    data = data.reset_index()
-                    data.columns = ['Feature', 'Value']
-                    st.dataframe(data, use_container_width=True)
+                st.subheader("Extracted Poincaré / Non-Linear Features")
+                # Only show non-linear (Poincaré) features on this page
+                nl = ppg_features.get('non_linear') if isinstance(ppg_features, dict) else None
+                if not nl:
+                    st.info("No non-linear features available. Run Poincaré analysis above.")
+                else:
+                    nl_df = pd.DataFrame.from_dict(nl, orient='index', columns=['Value'])
+                    nl_df = nl_df.reset_index()
+                    nl_df.columns = ['Feature', 'Value']
+                    st.dataframe(nl_df, use_container_width=True)
         else:
             st.write("Not enough detected beats to compute Poincaré plot (need at least 2 peaks).")
 
@@ -810,31 +832,65 @@ elif page.startswith("All Features & Export"):
     st.markdown("---")
     st.header("All Extracted Features & Export")
     st.markdown("---")
-
-    if not ppg_features:
+    if not ppg_features or (isinstance(ppg_features, dict) and len(ppg_features) == 0):
         st.info("No features have been extracted yet. Run analyses on the other pages first.")
     else:
-        # Build a dataframe from ppg_features and display
-        all_features_df = pd.DataFrame.from_dict(ppg_features, orient='index', columns=['Value'])
-        all_features_df = all_features_df.reset_index()
-        all_features_df.columns = ['Feature', 'Value']
-        # Try formatting numeric values
-        def try_float(x):
-            try:
-                return float(x)
-            except Exception:
-                return x
+        # Build categorized, deduplicated list of feature rows.
+        rows = []
+        added = set()
 
-        all_features_df['Value'] = all_features_df['Value'].apply(try_float)
+        def append_feature(category, feature, value):
+            # avoid duplicate feature names across categories
+            if feature in added:
+                return
+            added.add(feature)
+            # normalize numeric types
+            if value is None:
+                val = None
+            else:
+                try:
+                    val = float(value)
+                except Exception:
+                    val = value
+            rows.append({'Category': category, 'Feature': feature, 'Value': val})
 
-        st.subheader('Extracted Features')
-        st.dataframe(all_features_df, use_container_width=True)
+        # Preferred order: Time Domain, Frequency Domain, Non-Linear
+        td = ppg_features.get('time_domain')
+        if isinstance(td, dict):
+            for f, v in td.items():
+                append_feature('Time Domain', f, v)
 
-        # Export button
-        csv_data = all_features_df.to_csv(index=False)
-        st.download_button(
-            label='📥 Download All Features (CSV)',
-            data=csv_data,
-            file_name=f'all_extracted_features_{pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")}.csv',
-            mime='text/csv'
-        )
+        fd = ppg_features.get('frequency_domain')
+        if isinstance(fd, dict):
+            for f, v in fd.items():
+                append_feature('Frequency Domain', f, v)
+
+        nl = ppg_features.get('non_linear')
+        if isinstance(nl, dict):
+            for f, v in nl.items():
+                append_feature('Non-Linear', f, v)
+
+        # Any remaining top-level keys go into Other
+        for k, v in ppg_features.items():
+            if k in ('time_domain', 'frequency_domain', 'non_linear'):
+                continue
+            append_feature('Other', k, v)
+
+        if len(rows) == 0:
+            st.info("No features available to display. Ensure analyses were run and features merged.")
+        else:
+            all_features_df = pd.DataFrame(rows)
+            # keep column order
+            all_features_df = all_features_df[['Category', 'Feature', 'Value']]
+
+            st.subheader('Extracted Features (categorized)')
+            st.dataframe(all_features_df, use_container_width=True)
+
+            # Export button
+            csv_data = all_features_df.to_csv(index=False)
+            st.download_button(
+                label='📥 Download All Features (CSV)',
+                data=csv_data,
+                file_name=f'all_extracted_features_{pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")}.csv',
+                mime='text/csv'
+            )
