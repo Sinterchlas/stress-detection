@@ -484,14 +484,25 @@ elif page.startswith("Time Domain Analysis"):
 
             # Histogram of PI / RR intervals (match attached image style)
             st.subheader("Histogram of PI / RR Intervals")
-            # Allow user to choose units and number of bins
+            # Allow user to choose units and bin width (time-based bins)
             col_h1, col_h2 = st.columns([2, 1])
             with col_h1:
                 unit = st.selectbox('Units', options=['seconds', 'milliseconds'], index=0)
             with col_h2:
-                bins = st.slider('Bins', min_value=5, max_value=100, value=40, step=1)
+                # set sensible defaults depending on unit
+                if unit == 'milliseconds':
+                    default_width = 8.0
+                    step = 1.0
+                    min_w = 1.0
+                    fmt = '%.1f'
+                else:
+                    default_width = 0.008
+                    step = 0.001
+                    min_w = 0.001
+                    fmt = '%.3f'
+                bin_width = st.number_input('Bin width', min_value=min_w, value=default_width, step=step, format=fmt, help='Width of each histogram bin in selected units')
 
-            # Prepare values for histogram
+            # Prepare values for histogram in chosen unit
             if unit == 'milliseconds':
                 hist_values = np.array(pi_intervals) * 1000.0
                 x_title = 'RR Interval (ms)'
@@ -499,17 +510,33 @@ elif page.startswith("Time Domain Analysis"):
                 hist_values = np.array(pi_intervals)
                 x_title = 'RR Interval (s)'
 
-            fig_hist = go.Figure()
-            fig_hist.add_trace(go.Histogram(x=hist_values, nbinsx=bins, marker_color='#2a9df4', opacity=0.9))
-            fig_hist.update_layout(
-                title='Histogram',
-                xaxis_title=x_title,
-                yaxis_title='Count',
-                template='plotly_white',
-                bargap=0.05,
-                height=360
-            )
-            st.plotly_chart(fig_hist)
+            # Create xbins using start/end/size (Plotly)
+            if hist_values.size == 0:
+                st.info('No intervals available to plot histogram.')
+            else:
+                start = float(np.min(hist_values))
+                end = float(np.max(hist_values))
+                # ensure non-zero range
+                if start == end:
+                    start = start - float(bin_width)
+                    end = end + float(bin_width)
+
+                fig_hist = go.Figure()
+                fig_hist.add_trace(go.Histogram(
+                    x=hist_values,
+                    xbins=dict(start=start, end=end, size=float(bin_width)),
+                    marker_color='#2a9df4',
+                    opacity=0.9
+                ))
+                fig_hist.update_layout(
+                    title='Histogram',
+                    xaxis_title=x_title,
+                    yaxis_title='Count',
+                    template='plotly_white',
+                    bargap=0.05,
+                    height=360
+                )
+                st.plotly_chart(fig_hist)
 
             st.write(f"Mean Pulse Interval: {np.mean(pi_intervals):.4f} s")
             st.write(f"Std Pulse Interval: {np.std(pi_intervals):.4f} s")
