@@ -88,7 +88,7 @@ def compute_time_domain_features(nn_intervals):
         'NN50': nn50(nn_intervals),
         'pNN50 (%)': pnn50(nn_intervals),
         'HR (bpm)': mean_hr(nn_intervals),
-        'HTI': hti(nn_intervals),
+        'HTI': hti(nn_intervals, bin_size=(1/128)),
         'TINN (ms)': tinn(nn_intervals) * 1000,
         'CVNN': cvnn(nn_intervals),
         'CVSD': cvsd(nn_intervals),

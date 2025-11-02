@@ -482,6 +482,35 @@ elif page.startswith("Time Domain Analysis"):
             )
             st.plotly_chart(fig_tachogram)
 
+            # Histogram of PI / RR intervals (match attached image style)
+            st.subheader("Histogram of PI / RR Intervals")
+            # Allow user to choose units and number of bins
+            col_h1, col_h2 = st.columns([2, 1])
+            with col_h1:
+                unit = st.selectbox('Units', options=['seconds', 'milliseconds'], index=0)
+            with col_h2:
+                bins = st.slider('Bins', min_value=5, max_value=100, value=40, step=1)
+
+            # Prepare values for histogram
+            if unit == 'milliseconds':
+                hist_values = np.array(pi_intervals) * 1000.0
+                x_title = 'RR Interval (ms)'
+            else:
+                hist_values = np.array(pi_intervals)
+                x_title = 'RR Interval (s)'
+
+            fig_hist = go.Figure()
+            fig_hist.add_trace(go.Histogram(x=hist_values, nbinsx=bins, marker_color='#2a9df4', opacity=0.9))
+            fig_hist.update_layout(
+                title='Histogram',
+                xaxis_title=x_title,
+                yaxis_title='Count',
+                template='plotly_white',
+                bargap=0.05,
+                height=360
+            )
+            st.plotly_chart(fig_hist)
+
             st.write(f"Mean Pulse Interval: {np.mean(pi_intervals):.4f} s")
             st.write(f"Std Pulse Interval: {np.std(pi_intervals):.4f} s")
 
