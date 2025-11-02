@@ -836,9 +836,9 @@ elif page.startswith("Non-Linear Analysis"):
         else:
             st.write("Not enough detected beats to compute Poincaré plot (need at least 2 peaks).")
 
-elif page.startswith("All Features & Export"):
+elif page.startswith("Stress Detection Feature Result"):
     st.markdown("---")
-    st.header("All Extracted Features & Export")
+    st.header("Stress Detection Feature Result")
     st.markdown("---")
     if not ppg_features or (isinstance(ppg_features, dict) and len(ppg_features) == 0):
         st.info("No features have been extracted yet. Run analyses on the other pages first.")
