@@ -3,6 +3,7 @@ import lib.bmepy as bmepy
 import lib.time_domain as bmetm
 import lib.frequency_analysis as bmefq
 import lib.poincare as poincare
+import lib.emd as emd
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -109,6 +110,7 @@ with st.sidebar:
         "",
         [
             "Respiratory & Vasometric Extraction",
+            "Respiratory Rate (EMD)",
             "Time Domain Analysis",
             "Frequency Domain Analysis",
             "Non-Linear Analysis",
@@ -434,6 +436,303 @@ if page.startswith("Respiratory & Vasometric Extraction"):
             data = data.reset_index()
             data.columns = ['Feature', 'Value']
             st.dataframe(data)
+
+elif page.startswith("Respiratory Rate (EMD)"):
+    st.markdown("---")
+    st.header("Respiratory Rate Extraction using EMD")
+    st.markdown("---")
+    st.info("This page uses Empirical Mode Decomposition (EMD) from scratch to extract respiratory rate.")
+    
+    if uploaded_file:
+        # Use processed signal for EMD
+        st.subheader('Select Segment for EMD Analysis')
+        signal_length = len(processed_signal)
+        total_time = signal_length / target_sampling_rate
+        
+        segment_time_range = st.slider(
+            'Select start and end time (seconds) for EMD segment',
+            min_value=0.0,
+            max_value=float(f'{total_time:.2f}'),
+            value=(0.0, float(f'{total_time:.2f}')),
+            step=1/target_sampling_rate,
+            key='emd_segment'
+        )
+        
+        start_time, end_time = segment_time_range
+        start_sample = int(start_time * target_sampling_rate)
+        end_sample = int(end_time * target_sampling_rate)
+        segment = processed_signal[start_sample:end_sample]
+        segment_total_time = (end_sample - start_sample) / target_sampling_rate
+        
+        st.write(f"Selected segment duration: {segment_total_time:.2f} seconds")
+        
+        # Plot selected segment
+        x_axis = np.arange(len(segment)) / target_sampling_rate + start_time
+        plot_signal(x_axis, segment, title='Selected PPG Segment for EMD', x_label='Time (s)', y_label='Amplitude')
+        
+        # EMD Parameters
+        st.subheader("EMD Parameters")
+        col1, col2 = st.columns(2)
+        with col1:
+            max_imfs = st.number_input("Maximum IMFs to extract", min_value=3, max_value=15, value=10, step=1)
+        with col2:
+            freq_range_low = st.number_input("Min Respiratory Freq (Hz)", min_value=0.01, max_value=0.3, value=0.15, step=0.01, format="%.2f")
+            freq_range_high = st.number_input("Max Respiratory Freq (Hz)", min_value=0.2, max_value=0.6, value=0.4, step=0.01, format="%.2f")
+        
+        # Perform EMD
+        with st.spinner('Performing EMD decomposition... This may take a moment.'):
+            imfs, residue = emd.emd(segment, max_imfs=max_imfs)
+        
+        st.success(f'EMD decomposition complete! Extracted {len(imfs)} IMFs.')
+        
+        # Display all IMFs with envelopes
+        st.subheader(f"Extracted IMFs ({len(imfs)} components)")
+        
+        for i, imf in enumerate(imfs):
+            imf_freq = emd.compute_imf_frequency(imf, target_sampling_rate)
+            with st.expander(f"IMF {i+1} - Dominant Frequency: {imf_freq:.4f} Hz"):
+                x_imf = np.arange(len(imf)) / target_sampling_rate + start_time
+                
+                # Get envelopes for this IMF
+                upper_env, lower_env, mean_env = emd.get_envelopes(imf)
+                
+                # Plot IMF with envelopes
+                fig_imf = go.Figure()
+                
+                # Plot IMF
+                fig_imf.add_trace(go.Scatter(
+                    x=x_imf,
+                    y=imf,
+                    mode='lines',
+                    name=f'IMF {i+1}',
+                    line=dict(color='blue', width=1.5)
+                ))
+                
+                # Plot envelopes if available
+                if upper_env is not None and lower_env is not None:
+                    fig_imf.add_trace(go.Scatter(
+                        x=x_imf,
+                        y=upper_env,
+                        mode='lines',
+                        name='Upper Envelope',
+                        line=dict(color='red', width=1, dash='dash'),
+                        opacity=0.7
+                    ))
+                    
+                    fig_imf.add_trace(go.Scatter(
+                        x=x_imf,
+                        y=lower_env,
+                        mode='lines',
+                        name='Lower Envelope',
+                        line=dict(color='green', width=1, dash='dash'),
+                        opacity=0.7
+                    ))
+                    
+                    if mean_env is not None:
+                        fig_imf.add_trace(go.Scatter(
+                            x=x_imf,
+                            y=mean_env,
+                            mode='lines',
+                            name='Mean Envelope',
+                            line=dict(color='orange', width=1, dash='dot'),
+                            opacity=0.6
+                        ))
+                
+                # Mark extrema
+                max_idx, min_idx = emd.find_extrema(imf)
+                if len(max_idx) > 0:
+                    fig_imf.add_trace(go.Scatter(
+                        x=x_imf[max_idx],
+                        y=imf[max_idx],
+                        mode='markers',
+                        name='Maxima',
+                        marker=dict(color='red', size=6, symbol='triangle-up')
+                    ))
+                
+                if len(min_idx) > 0:
+                    fig_imf.add_trace(go.Scatter(
+                        x=x_imf[min_idx],
+                        y=imf[min_idx],
+                        mode='markers',
+                        name='Minima',
+                        marker=dict(color='green', size=6, symbol='triangle-down')
+                    ))
+                
+                fig_imf.update_layout(
+                    title=f'IMF {i+1} with Envelopes (Freq: {imf_freq:.4f} Hz)',
+                    xaxis_title='Time (s)',
+                    yaxis_title='Amplitude',
+                    template='plotly_white',
+                    height=400,
+                    showlegend=True
+                )
+                st.plotly_chart(fig_imf)
+        
+        # Display residue
+        with st.expander(f"Residue"):
+            x_res = np.arange(len(residue)) / target_sampling_rate + start_time
+            plot_signal(x_res, residue, title='Residue', x_label='Time (s)', y_label='Amplitude')
+        
+        # Create a table showing all IMFs and their frequencies
+        imf_summary = []
+        for i, imf in enumerate(imfs):
+            freq = emd.compute_imf_frequency(imf, target_sampling_rate)
+            in_range = freq_range_low <= freq <= freq_range_high
+            imf_summary.append({
+                'IMF': i + 1,
+                'Dominant Frequency (Hz)': round(freq, 4),
+                'In Respiratory Range': 'Yes' if in_range else 'No'
+            })
+        
+        df_imf_summary = pd.DataFrame(imf_summary)
+        st.dataframe(df_imf_summary, use_container_width=True)
+        respiratory_imf, imf_index, imf_freq = emd.select_respiratory_imf(
+            imfs, 
+            target_sampling_rate, 
+            freq_range=(freq_range_low, freq_range_high)
+        )
+        
+        if respiratory_imf is not None:
+            st.success(f"Selected IMF {imf_index + 1} as respiratory component (Frequency: {imf_freq:.4f} Hz)")
+            
+            # Plot respiratory IMF
+            x_resp = np.arange(len(respiratory_imf)) / target_sampling_rate + start_time
+            plot_signal(x_resp, respiratory_imf, 
+                       title=f'Respiratory IMF (IMF {imf_index + 1})', 
+                       x_label='Time (s)', 
+                       y_label='Amplitude')
+            
+            # Peak detection on respiratory IMF
+            st.subheader("Peak Detection on Respiratory IMF")
+            
+            # Normalize the respiratory IMF
+            resp_normalized = respiratory_imf - np.mean(respiratory_imf)
+            
+            # Parameters for peak detection
+            col_p1, col_p2, col_p3 = st.columns(3)
+            with col_p1:
+                peak_height_emd = st.number_input("Peak Height", 
+                                                   min_value=0.0, 
+                                                   value=0.0, 
+                                                   step=0.1, 
+                                                   key='peak_height_emd',
+                                                   help="Minimum height of peaks")
+            with col_p2:
+                peak_distance_emd = st.number_input("Peak Distance (samples)", 
+                                                     min_value=1, 
+                                                     value=50, 
+                                                     step=10, 
+                                                     key='peak_distance_emd',
+                                                     help="Minimum distance between peaks")
+            with col_p3:
+                peak_prominence_emd = st.number_input("Peak Prominence", 
+                                                       min_value=0.0, 
+                                                       value=0.2, 
+                                                       step=0.1, 
+                                                       key='peak_prominence_emd',
+                                                       help="Prominence of peaks")
+            
+            # Detect peaks
+            peaks_emd = find_peaks(
+                resp_normalized, 
+                height=peak_height_emd, 
+                distance=peak_distance_emd, 
+                prominence=peak_prominence_emd
+            )[0]
+            
+            # Calculate respiratory rate
+            if len(peaks_emd) > 0:
+                respiratory_rate_emd = len(peaks_emd) / (segment_total_time / 60)
+                ppg_features['respiratory_rate_emd (brpm)'] = round(respiratory_rate_emd, 4)
+                
+                # Visualization
+                fig_emd = go.Figure()
+                
+                # Plot signal
+                time_array_emd = np.arange(len(resp_normalized)) / target_sampling_rate + start_time
+                fig_emd.add_trace(go.Scatter(
+                    x=time_array_emd,
+                    y=resp_normalized,
+                    mode='lines',
+                    name='Respiratory IMF',
+                    line=dict(color='blue', width=1.5)
+                ))
+                
+                # Plot peaks
+                fig_emd.add_trace(go.Scatter(
+                    x=time_array_emd[peaks_emd],
+                    y=resp_normalized[peaks_emd],
+                    mode='markers',
+                    name=f'Detected Peaks ({len(peaks_emd)})',
+                    marker=dict(
+                        color='red',
+                        size=10,
+                        symbol='circle',
+                        line=dict(width=2, color='white')
+                    )
+                ))
+                
+                # Add vertical lines at peaks
+                for i, peak_idx in enumerate(peaks_emd):
+                    fig_emd.add_vline(
+                        x=time_array_emd[peak_idx],
+                        line_dash="dash",
+                        line_color="red",
+                        opacity=0.4,
+                        annotation_text=f"P{i+1}",
+                        annotation_position="top"
+                    )
+                
+                fig_emd.update_layout(
+                    title='Peak Detection on Respiratory IMF (EMD)',
+                    xaxis_title='Time (seconds)',
+                    yaxis_title='Amplitude',
+                    template='plotly_white',
+                    height=500,
+                    showlegend=True
+                )
+                st.plotly_chart(fig_emd)
+                
+                st.write(f"**Estimated Respiration Rate (EMD): {respiratory_rate_emd:.2f} breaths per minute**")
+                
+                # Compare with ground truth if available
+                if rr_file is not None:
+                    try:
+                        rr_time, rr_force = load_force(rr_file)
+                        if len(rr_time) > 0 and len(rr_force) > 0:
+                            rr_force = rr_force - np.mean(rr_force)
+                            rr_peaks = find_peaks(rr_force, height=2, distance=1)[0]
+                            real_respiration_rate = len(rr_peaks)/(rr_time[-1]/60) if rr_time[-1] > 0 else None
+                            if real_respiration_rate is not None:
+                                st.write(f"**Label Respiration Rate: {real_respiration_rate:.2f} breaths per minute**")
+                                error = abs(respiratory_rate_emd - real_respiration_rate)
+                                st.write(f"**Absolute Error: {error:.2f} brpm**")
+                        else:
+                            st.warning("Uploaded RR file seems empty or incorrectly formatted.")
+                    except Exception as e:
+                        st.error(f"Failed to load RR ground truth file: {e}")
+                else:
+                    st.info("No ground-truth RR file uploaded for comparison.")
+                
+                # Display extracted feature
+                st.subheader("Extracted Feature (EMD Method)")
+                emd_features = {
+                    'respiratory_rate_emd (brpm)': ppg_features.get('respiratory_rate_emd (brpm)'),
+                    'selected_imf_index': imf_index + 1,
+                    'selected_imf_frequency (Hz)': round(imf_freq, 4),
+                    'number_of_peaks': len(peaks_emd)
+                }
+                data_emd = pd.DataFrame.from_dict(emd_features, orient='index', columns=['Value'])
+                data_emd = data_emd.reset_index()
+                data_emd.columns = ['Feature', 'Value']
+                st.dataframe(data_emd)
+                
+            else:
+                st.warning("No peaks detected in the respiratory IMF. Try adjusting the peak detection parameters.")
+        else:
+            st.error(f"❌ No IMF found in the respiratory frequency range ({freq_range_low}-{freq_range_high} Hz). Try adjusting the frequency range or EMD parameters.")
+    else:
+        st.info("Please upload a PPG file to begin EMD analysis.")
 
 elif page.startswith("Time Domain Analysis"):
     st.markdown("---")
